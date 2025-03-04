@@ -45,7 +45,7 @@
 #endif
 
 #include "urldata.h"
-#include "hash.h"
+#include "hash_offt.h"
 #include "sendf.h"
 #include "strdup.h"
 #include "rand.h"
@@ -133,7 +133,7 @@ struct cf_ngtcp2_ctx {
   struct curltime handshake_at;      /* time connect handshake finished */
   struct bufc_pool stream_bufcp;     /* chunk pool for streams */
   struct dynbuf scratch;             /* temp buffer for header construction */
-  struct Curl_hash streams;          /* hash `data->mid` to `h3_stream_ctx` */
+  struct Curl_hash_offt streams;     /* hash `data->mid` to `h3_stream_ctx` */
   size_t max_stream_window;          /* max flow window for one stream */
   uint64_t max_idle_ms;              /* max idle time for QUIC connection */
   uint64_t used_bidi_streams;        /* bidi streams we have opened */
@@ -156,7 +156,7 @@ struct cf_ngtcp2_ctx {
 #define CF_CTX_CALL_DATA(cf)  \
   ((struct cf_ngtcp2_ctx *)(cf)->ctx)->call_data
 
-static void h3_stream_hash_free(void *stream);
+static void h3_stream_hash_free(curl_off_t id, void *stream);
 
 static void cf_ngtcp2_ctx_init(struct cf_ngtcp2_ctx *ctx)
 {
@@ -179,8 +179,7 @@ static void cf_ngtcp2_ctx_free(struct cf_ngtcp2_ctx *ctx)
     vquic_ctx_free(&ctx->q);
     Curl_bufcp_free(&ctx->stream_bufcp);
     Curl_dyn_free(&ctx->scratch);
-    Curl_hash_clean(&ctx->streams);
-    Curl_hash_destroy(&ctx->streams);
+    Curl_hash_offt_destroy(&ctx->streams);
     Curl_ssl_peer_cleanup(&ctx->peer);
   }
   free(ctx);
@@ -225,8 +224,9 @@ static void h3_stream_ctx_free(struct h3_stream_ctx *stream)
   free(stream);
 }
 
-static void h3_stream_hash_free(void *stream)
+static void h3_stream_hash_free(curl_off_t id, void *stream)
 {
+  (void)id;
   DEBUGASSERT(stream);
   h3_stream_ctx_free((struct h3_stream_ctx *)stream);
 }
@@ -482,6 +482,11 @@ static int cf_ngtcp2_handshake_completed(ngtcp2_conn *tconn, void *user_data)
   if(ctx->use_earlydata)
     Curl_pgrsTimeWas(data, TIMER_APPCONNECT, ctx->handshake_at);
   if(ctx->use_earlydata) {
+#if defined(USE_OPENSSL) && defined(HAVE_OPENSSL_EARLYDATA)
+    ctx->earlydata_accepted =
+      (SSL_get_early_data_status(ctx->tls.ossl.ssl) !=
+       SSL_EARLY_DATA_REJECTED);
+#endif
 #ifdef USE_GNUTLS
     int flags = gnutls_session_get_flags(ctx->tls.gtls.session);
     ctx->earlydata_accepted = !!(flags & GNUTLS_SFLAGS_EARLY_DATA);
@@ -2183,8 +2188,24 @@ static int quic_ossl_new_session_cb(SSL *ssl, SSL_SESSION *ssl_sessionid)
   ctx = cf ? cf->ctx : NULL;
   data = cf ? CF_DATA_CURRENT(cf) : NULL;
   if(cf && data && ctx) {
+    unsigned char *quic_tp = NULL;
+    size_t quic_tp_len = 0;
+#ifdef HAVE_OPENSSL_EARLYDATA
+    ngtcp2_ssize tplen;
+    uint8_t tpbuf[256];
+
+    tplen = ngtcp2_conn_encode_0rtt_transport_params(ctx->qconn, tpbuf,
+                                                     sizeof(tpbuf));
+    if(tplen < 0)
+      CURL_TRC_CF(data, cf, "error encoding 0RTT transport data: %s",
+                  ngtcp2_strerror((int)tplen));
+    else {
+      quic_tp = (unsigned char *)tpbuf;
+      quic_tp_len = (size_t)tplen;
+    }
+#endif
     Curl_ossl_add_session(cf, data, ctx->peer.scache_key, ssl_sessionid,
-                          SSL_version(ssl), "h3");
+                          SSL_version(ssl), "h3", quic_tp, quic_tp_len);
     return 1;
   }
   return 0;
@@ -2355,6 +2376,9 @@ static CURLcode cf_ngtcp2_on_session_reuse(struct Curl_cfilter *cf,
   CURLcode result = CURLE_OK;
 
   *do_early_data = FALSE;
+#if defined(USE_OPENSSL) && defined(HAVE_OPENSSL_EARLYDATA)
+  ctx->earlydata_max = scs->earlydata_max;
+#endif
 #ifdef USE_GNUTLS
   ctx->earlydata_max =
     gnutls_record_get_max_early_data_size(ctx->tls.gtls.session);
@@ -2366,7 +2390,8 @@ static CURLcode cf_ngtcp2_on_session_reuse(struct Curl_cfilter *cf,
   ctx->earlydata_max = 0;
 #endif /* WOLFSSL_EARLY_DATA */
 #endif
-#if defined(USE_GNUTLS) || defined(USE_WOLFSSL)
+#if defined(USE_GNUTLS) || defined(USE_WOLFSSL) || \
+    (defined(USE_OPENSSL) && defined(HAVE_OPENSSL_EARLYDATA))
   if((!ctx->earlydata_max)) {
     CURL_TRC_CF(data, cf, "SSL session does not allow earlydata");
   }
@@ -2394,7 +2419,7 @@ static CURLcode cf_ngtcp2_on_session_reuse(struct Curl_cfilter *cf,
       }
     }
   }
-#else /* USE_GNUTLS */
+#else /* not supported in the TLS backend */
   (void)data;
   (void)ctx;
   (void)scs;

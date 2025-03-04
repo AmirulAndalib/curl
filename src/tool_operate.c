@@ -275,7 +275,7 @@ static curl_off_t VmsSpecialSize(const char *name,
 }
 #endif /* __VMS */
 
-#define BUFFER_SIZE (100*1024)
+#define BUFFER_SIZE 102400L
 
 struct per_transfer *transfers; /* first node */
 static struct per_transfer *transfersl; /* last node */
@@ -940,7 +940,7 @@ static CURLcode config2setopts(struct GlobalConfig *global,
         /* use a smaller sized buffer for better sleeps */
         my_setopt(curl, CURLOPT_BUFFERSIZE, (long)config->recvpersecond);
       else
-        my_setopt(curl, CURLOPT_BUFFERSIZE, (long)BUFFER_SIZE);
+        my_setopt(curl, CURLOPT_BUFFERSIZE, BUFFER_SIZE);
   }
 
   my_setopt_str(curl, CURLOPT_URL, per->url);
@@ -999,11 +999,11 @@ static CURLcode config2setopts(struct GlobalConfig *global,
   my_setopt(curl, CURLOPT_APPEND, config->ftp_append ? 1L : 0L);
 
   if(config->netrc_opt)
-    my_setopt_enum(curl, CURLOPT_NETRC, (long)CURL_NETRC_OPTIONAL);
+    my_setopt_enum(curl, CURLOPT_NETRC, CURL_NETRC_OPTIONAL);
   else if(config->netrc || config->netrc_file)
-    my_setopt_enum(curl, CURLOPT_NETRC, (long)CURL_NETRC_REQUIRED);
+    my_setopt_enum(curl, CURLOPT_NETRC, CURL_NETRC_REQUIRED);
   else
-    my_setopt_enum(curl, CURLOPT_NETRC, (long)CURL_NETRC_IGNORED);
+    my_setopt_enum(curl, CURLOPT_NETRC, CURL_NETRC_IGNORED);
 
   if(config->netrc_file)
     my_setopt_str(curl, CURLOPT_NETRC_FILE, config->netrc_file);
@@ -1058,7 +1058,7 @@ static CURLcode config2setopts(struct GlobalConfig *global,
 
   /* new in libcurl 7.10.6 (default is Basic) */
   if(config->authtype)
-    my_setopt_bitmask(curl, CURLOPT_HTTPAUTH, (long)config->authtype);
+    my_setopt_bitmask(curl, CURLOPT_HTTPAUTH, config->authtype);
 
   my_setopt_slist(curl, CURLOPT_HTTPHEADER, config->headers);
 
@@ -1397,7 +1397,7 @@ static CURLcode config2setopts(struct GlobalConfig *global,
   my_setopt(curl, CURLOPT_COOKIESESSION, config->cookiesession ?
             1L : 0L);
 
-  my_setopt_enum(curl, CURLOPT_TIMECONDITION, (long)config->timecond);
+  my_setopt_enum(curl, CURLOPT_TIMECONDITION, config->timecond);
   my_setopt(curl, CURLOPT_TIMEVALUE_LARGE, config->condtime);
   my_setopt_str(curl, CURLOPT_CUSTOMREQUEST, config->customrequest);
   customrequest_helper(config, config->httpreq, config->customrequest);
@@ -1511,15 +1511,15 @@ static CURLcode config2setopts(struct GlobalConfig *global,
 
   /* new in curl 7.15.5 */
   if(config->ftp_ssl_reqd)
-    my_setopt_enum(curl, CURLOPT_USE_SSL, (long)CURLUSESSL_ALL);
+    my_setopt_enum(curl, CURLOPT_USE_SSL, CURLUSESSL_ALL);
 
   /* new in curl 7.11.0 */
   else if(config->ftp_ssl)
-    my_setopt_enum(curl, CURLOPT_USE_SSL, (long)CURLUSESSL_TRY);
+    my_setopt_enum(curl, CURLOPT_USE_SSL, CURLUSESSL_TRY);
 
   /* new in curl 7.16.0 */
   else if(config->ftp_ssl_control)
-    my_setopt_enum(curl, CURLOPT_USE_SSL, (long)CURLUSESSL_CONTROL);
+    my_setopt_enum(curl, CURLOPT_USE_SSL, CURLUSESSL_CONTROL);
 
   /* new in curl 7.16.1 */
   if(config->ftp_ssl_ccc)
@@ -1749,6 +1749,9 @@ static CURLcode config2setopts(struct GlobalConfig *global,
     }
 #endif
   }
+  /* new in 8.13.0 */
+  if(config->upload_flags)
+    my_setopt(curl, CURLOPT_UPLOAD_FLAGS, (long)config->upload_flags);
   return result;
 }
 
@@ -1889,7 +1892,7 @@ static CURLcode single_transfer(struct GlobalConfig *global,
     }
 
     if(!state->urlnum) {
-      if(!config->globoff) {
+      if(!config->globoff && !(urlnode->flags & GETOUT_NOGLOB)) {
         /* Unless explicitly shut off, we expand '{...}' and '[...]'
            expressions and return total number of URLs in pattern set */
         result = glob_url(&state->urls, urlnode->url, &state->urlnum,
@@ -2589,6 +2592,10 @@ static int cb_socket(CURL *easy, curl_socket_t s, int action,
   int events = 0;
   (void)easy;
 
+#if DEBUG_UV
+  fprintf(tool_stderr, "parallel_event: cb_socket, fd=%d, action=%x, p=%p\n",
+          (int)s, action, socketp);
+#endif
   switch(action) {
   case CURL_POLL_IN:
   case CURL_POLL_OUT:
@@ -2678,12 +2685,26 @@ static CURLcode parallel_event(struct parastate *s)
     }
   }
 
+  result = s->result;
+
+  /* Make sure to return some kind of error if there was a multi problem */
+  if(s->mcode) {
+    result = (s->mcode == CURLM_OUT_OF_MEMORY) ? CURLE_OUT_OF_MEMORY :
+      /* The other multi errors should never happen, so return
+         something suitably generic */
+      CURLE_BAD_FUNCTION_ARGUMENT;
+  }
+
+  /* We need to cleanup the multi here, since the uv context lives on the
+   * stack and will be gone. multi_cleanup can triggere events! */
+  curl_multi_cleanup(s->multi);
+
 #if DEBUG_UV
   fprintf(tool_stderr, "DONE parallel_event -> %d, mcode=%d, %d running, "
           "%d more\n",
-          s->result, s->mcode, uv.s->still_running, s->more_transfers);
+          result, s->mcode, uv.s->still_running, s->more_transfers);
 #endif
-  return s->result;
+  return result;
 }
 
 #endif
@@ -2787,7 +2808,7 @@ static CURLcode parallel_transfers(struct GlobalConfig *global,
 #ifdef DEBUGBUILD
   if(global->test_event_based)
 #ifdef USE_LIBUV
-    result = parallel_event(s);
+    return parallel_event(s);
 #else
     errorf(global, "Testing --parallel event-based requires libuv");
 #endif
@@ -3228,7 +3249,9 @@ CURLcode operate(struct GlobalConfig *global, int argc, argv_item_t argv[])
           curl_share_setopt(share, CURLSHOPT_SHARE, CURL_LOCK_DATA_DNS);
           curl_share_setopt(share, CURLSHOPT_SHARE,
                             CURL_LOCK_DATA_SSL_SESSION);
-          curl_share_setopt(share, CURLSHOPT_SHARE, CURL_LOCK_DATA_CONNECT);
+          /* Running parallel, use the multi connection cache */
+          if(!global->parallel)
+            curl_share_setopt(share, CURLSHOPT_SHARE, CURL_LOCK_DATA_CONNECT);
           curl_share_setopt(share, CURLSHOPT_SHARE, CURL_LOCK_DATA_PSL);
           curl_share_setopt(share, CURLSHOPT_SHARE, CURL_LOCK_DATA_HSTS);
 

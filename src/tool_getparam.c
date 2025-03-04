@@ -339,6 +339,7 @@ static const struct LongShort aliases[]= {
   {"trace-time",                 ARG_BOOL, ' ', C_TRACE_TIME},
   {"unix-socket",                ARG_FILE, ' ', C_UNIX_SOCKET},
   {"upload-file",                ARG_FILE, 'T', C_UPLOAD_FILE},
+  {"upload-flags",               ARG_STRG, ' ', C_UPLOAD_FLAGS},
   {"url",                        ARG_STRG, ' ', C_URL},
   {"url-query",                  ARG_STRG, ' ', C_URL_QUERY},
   {"use-ascii",                  ARG_BOOL, 'B', C_USE_ASCII},
@@ -1020,9 +1021,10 @@ const struct LongShort *findlongopt(const char *opt)
                  sizeof(aliases[0]), findarg);
 }
 
-static ParameterError parse_url(struct GlobalConfig *global,
-                                struct OperationConfig *config,
-                                const char *nextarg)
+static ParameterError add_url(struct GlobalConfig *global,
+                              struct OperationConfig *config,
+                              const char *thisurl,
+                              int extraflags)
 {
   ParameterError err = PARAM_OK;
   struct getout *url;
@@ -1050,16 +1052,75 @@ static ParameterError parse_url(struct GlobalConfig *global,
     return PARAM_NO_MEM;
   else {
     /* fill in the URL */
-    err = getstr(&url->url, nextarg, DENY_BLANK);
-    url->flags |= GETOUT_URL;
-    if(!err && (++config->num_urls > 1) && (config->etag_save_file ||
-                                            config->etag_compare_file)) {
+    err = getstr(&url->url, thisurl, DENY_BLANK);
+    url->flags |= GETOUT_URL | extraflags;
+    if(!err && (++config->num_urls > 1) &&
+       (config->etag_save_file || config->etag_compare_file)) {
       errorf(global, "The etag options only work on a single URL");
       return PARAM_BAD_USE;
     }
   }
   return err;
 }
+
+static ParameterError parse_url(struct GlobalConfig *global,
+                                struct OperationConfig *config,
+                                const char *nextarg)
+{
+  if(nextarg && (nextarg[0] == '@')) {
+    /* read URLs from a file, treat all as -O */
+    struct curlx_dynbuf line;
+    ParameterError err = PARAM_OK;
+    bool error = FALSE;
+    bool fromstdin = !strcmp("-", &nextarg[1]);
+    FILE *f;
+
+    if(fromstdin)
+      f = stdin;
+    else
+      f = fopen(&nextarg[1], FOPEN_READTEXT);
+    if(f) {
+      curlx_dyn_init(&line, 8092);
+      while(my_get_line(f, &line, &error)) {
+        /* every line has a newline that we strip off */
+        size_t len = curlx_dyn_len(&line);
+        const char *ptr;
+        if(len)
+          curlx_dyn_setlen(&line, len - 1);
+        ptr = curlx_dyn_ptr(&line);
+        /* line with # in the first non-blank column is a comment! */
+        while(*ptr && ISSPACE(*ptr))
+          ptr++;
+
+        switch(*ptr) {
+        case '#':
+        case '/':
+        case '\r':
+        case '\n':
+        case '*':
+        case '\0':
+          /* comment or weird line, skip it */
+          break;
+        default:
+          err = add_url(global, config, ptr, GETOUT_USEREMOTE | GETOUT_NOGLOB);
+          break;
+        }
+        if(err)
+          break;
+        curlx_dyn_reset(&line);
+      }
+      if(!fromstdin)
+        fclose(f);
+      curlx_dyn_free(&line);
+      if(error || err)
+        return PARAM_READ_ERROR;
+      return PARAM_OK;
+    }
+    return PARAM_READ_ERROR; /* file not found */
+  }
+  return add_url(global, config, nextarg, 0);
+}
+
 
 static ParameterError parse_localport(struct OperationConfig *config,
                                       char *nextarg)
@@ -1559,6 +1620,65 @@ static ParameterError parse_time_cond(struct GlobalConfig *global,
             "See curl_getdate(3) for valid date syntax.");
     }
   }
+  return err;
+}
+
+struct flagmap {
+  const char *name;
+  size_t len;
+  unsigned char flag;
+};
+
+static const struct flagmap flag_table[] = {
+  {"answered", 8, CURLULFLAG_ANSWERED},
+  {"deleted",  7, CURLULFLAG_DELETED},
+  {"draft",    5, CURLULFLAG_DRAFT},
+  {"flagged",  7, CURLULFLAG_FLAGGED},
+  {"seen",     4, CURLULFLAG_SEEN},
+  {NULL,       0, 0}
+};
+
+static ParameterError parse_upload_flags(struct OperationConfig *config,
+                                      char *nextarg)
+{
+  char *flag;
+  ParameterError err = PARAM_OK;
+  char *tmp = strdup(nextarg);
+
+  if(!tmp)
+    return PARAM_NO_MEM;
+
+  flag = tmp;
+  while(flag) {
+    bool negate;
+    const struct flagmap *map;
+    char *next = strchr(flag, ','); /* Find next comma or end */
+    if(next)
+      *next++ = '\0';
+
+    negate = (*flag == '-');
+    if(negate)
+      flag++;
+
+    for(map = flag_table; map->name; map++) {
+      if(!strncmp(flag, map->name, map->len) && flag[map->len] == '\0') {
+        if(negate)
+          config->upload_flags &= (unsigned char)~map->flag;
+        else
+          config->upload_flags |= map->flag;
+        break;
+      }
+    }
+
+   if(!map->name) {
+     err = PARAM_OPTION_UNKNOWN;
+     break;
+   }
+
+   flag = next;
+  }
+
+  free(tmp);
   return err;
 }
 
@@ -2848,6 +2968,9 @@ ParameterError getparameter(const char *flag, /* f or -long-flag */
       break;
     case C_MPTCP: /* --mptcp */
       config->mptcp = TRUE;
+      break;
+    case C_UPLOAD_FLAGS: /* --upload-flags */
+      err = parse_upload_flags(config, nextarg);
       break;
     default: /* unknown flag */
       err = PARAM_OPTION_UNKNOWN;

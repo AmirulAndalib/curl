@@ -438,7 +438,7 @@ static CURLcode setopt_long(struct Curl_easy *data, CURLoption option,
      */
     if((arg < CURL_TIMECOND_NONE) || (arg >= CURL_TIMECOND_LAST))
       return CURLE_BAD_FUNCTION_ARGUMENT;
-    data->set.timecondition = (unsigned char)(curl_TimeCond)arg;
+    data->set.timecondition = (unsigned char)arg;
     break;
   case CURLOPT_TIMEVALUE:
     /*
@@ -525,7 +525,9 @@ static CURLcode setopt_long(struct Curl_easy *data, CURLoption option,
     /*
      * Follow Location: header hints on an HTTP-server.
      */
-    data->set.http_follow_location = enabled;
+    if(uarg > 3)
+      return CURLE_BAD_FUNCTION_ARGUMENT;
+    data->set.http_follow_mode = (unsigned char)uarg;
     break;
 
   case CURLOPT_UNRESTRICTED_AUTH:
@@ -1401,7 +1403,9 @@ static CURLcode setopt_long(struct Curl_easy *data, CURLoption option,
      */
     Curl_safefree(data->set.str[STRING_SSL_ENGINE]);
     return Curl_ssl_set_engine_default(data);
-
+  case CURLOPT_UPLOAD_FLAGS:
+    data->set.upload_flags = (unsigned char)arg;
+    break;
   default:
     /* unknown option */
     return CURLE_UNKNOWN_OPTION;

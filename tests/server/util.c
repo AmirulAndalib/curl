@@ -54,13 +54,9 @@
 #include "getpart.h"
 #include "util.h"
 #include "timeval.h"
+#include "timediff.h"
 
-#ifdef USE_WINSOCK
-#undef  EINTR
-#define EINTR    4 /* errno.h value */
-#undef  EINVAL
-#define EINVAL  22 /* errno.h value */
-#endif
+const char *serverlogfile = NULL;  /* needs init from main() */
 
 static struct timeval tvnow(void);
 
@@ -143,7 +139,7 @@ void logmsg(const char *msg, ...)
 
 #ifdef _WIN32
 /* use instead of perror() on generic Windows */
-void win32_perror(const char *msg)
+static void win32_perror(const char *msg)
 {
   char buf[512];
   int err = SOCKERRNO;
@@ -153,7 +149,17 @@ void win32_perror(const char *msg)
   fprintf(stderr, "%s\n", buf);
 }
 
-void win32_init(void)
+static void win32_cleanup(void)
+{
+#ifdef USE_WINSOCK
+  WSACleanup();
+#endif  /* USE_WINSOCK */
+
+  /* flush buffers of all streams regardless of their mode */
+  _flushall();
+}
+
+int win32_init(void)
 {
 #ifdef USE_WINSOCK
   WORD wVersionRequested;
@@ -164,29 +170,21 @@ void win32_init(void)
   err = WSAStartup(wVersionRequested, &wsaData);
 
   if(err) {
-    perror("Winsock init failed");
+    win32_perror("Winsock init failed");
     logmsg("Error initialising Winsock -- aborting");
-    exit(1);
+    return 1;
   }
 
   if(LOBYTE(wsaData.wVersion) != LOBYTE(wVersionRequested) ||
      HIBYTE(wsaData.wVersion) != HIBYTE(wVersionRequested) ) {
     WSACleanup();
-    perror("Winsock init failed");
+    win32_perror("Winsock init failed");
     logmsg("No suitable winsock.dll found -- aborting");
-    exit(1);
+    return 1;
   }
 #endif  /* USE_WINSOCK */
-}
-
-void win32_cleanup(void)
-{
-#ifdef USE_WINSOCK
-  WSACleanup();
-#endif  /* USE_WINSOCK */
-
-  /* flush buffers of all streams regardless of their mode */
-  _flushall();
+  atexit(win32_cleanup);
+  return 0;
 }
 
 /* socket-safe strerror (works on Winsock errors, too) */
@@ -200,22 +198,35 @@ const char *sstrerror(int err)
 /* set by the main code to point to where the test dir is */
 const char *path = ".";
 
-FILE *test2fopen(long testno, const char *logdir)
+FILE *test2fopen(long testno, const char *logdir2)
 {
   FILE *stream;
   char filename[256];
   /* first try the alternative, preprocessed, file */
-  msnprintf(filename, sizeof(filename), ALTTEST_DATA_PATH, logdir, testno);
+  msnprintf(filename, sizeof(filename), "%s/test%ld", logdir2, testno);
   stream = fopen(filename, "rb");
   if(stream)
     return stream;
 
   /* then try the source version */
-  msnprintf(filename, sizeof(filename), TEST_DATA_PATH, path, testno);
+  msnprintf(filename, sizeof(filename), "%s/data/test%ld", path, testno);
   stream = fopen(filename, "rb");
 
   return stream;
 }
+
+#if !defined(MSDOS) && !defined(USE_WINSOCK)
+static long timediff(struct timeval newer, struct timeval older)
+{
+  timediff_t diff = newer.tv_sec-older.tv_sec;
+  if(diff >= (LONG_MAX/1000))
+    return LONG_MAX;
+  else if(diff <= (LONG_MIN/1000))
+    return LONG_MIN;
+  return (long)(newer.tv_sec-older.tv_sec)*1000+
+    (long)(newer.tv_usec-older.tv_usec)/1000;
+}
+#endif
 
 /*
  * Portable function used for waiting a specific amount of ms.
@@ -243,7 +254,7 @@ int wait_ms(int timeout_ms)
     CURL_SETERRNO(EINVAL);
     return -1;
   }
-#if defined(MSDOS)
+#ifdef MSDOS
   delay(timeout_ms);
 #elif defined(USE_WINSOCK)
   Sleep((DWORD)timeout_ms);
@@ -279,7 +290,7 @@ curl_off_t our_getpid(void)
   curl_off_t pid;
 
   pid = (curl_off_t)Curl_getpid();
-#if defined(_WIN32)
+#ifdef _WIN32
   /* store pid + MAX_PID to avoid conflict with Cygwin/msys PIDs, see also:
    * - 2019-01-31: https://cygwin.com/git/?p=newlib-cygwin.git;a=commit; ↵
    *               h=b5e1003722cb14235c4f166be72c09acdffc62ea
@@ -365,7 +376,7 @@ void clear_advisor_read_lock(const char *filename)
 }
 
 
-#if defined(_WIN32)
+#ifdef _WIN32
 
 static struct timeval tvnow(void)
 {
@@ -452,17 +463,6 @@ static struct timeval tvnow(void)
 }
 
 #endif
-
-long timediff(struct timeval newer, struct timeval older)
-{
-  timediff_t diff = newer.tv_sec-older.tv_sec;
-  if(diff >= (LONG_MAX/1000))
-    return LONG_MAX;
-  else if(diff <= (LONG_MIN/1000))
-    return LONG_MIN;
-  return (long)(newer.tv_sec-older.tv_sec)*1000+
-    (long)(newer.tv_usec-older.tv_usec)/1000;
-}
 
 /* vars used to keep around previous signal handlers */
 
@@ -631,7 +631,7 @@ static unsigned int WINAPI main_window_loop(void *lpParameter)
   wc.hInstance = (HINSTANCE)lpParameter;
   wc.lpszClassName = TEXT("MainWClass");
   if(!RegisterClass(&wc)) {
-    perror("RegisterClass failed");
+    win32_perror("RegisterClass failed");
     return (DWORD)-1;
   }
 
@@ -643,14 +643,14 @@ static unsigned int WINAPI main_window_loop(void *lpParameter)
                                       (HWND)NULL, (HMENU)NULL,
                                       wc.hInstance, (LPVOID)NULL);
   if(!hidden_main_window) {
-    perror("CreateWindowEx failed");
+    win32_perror("CreateWindowEx failed");
     return (DWORD)-1;
   }
 
   do {
     ret = GetMessage(&msg, NULL, 0, 0);
     if(ret == -1) {
-      perror("GetMessage failed");
+      win32_perror("GetMessage failed");
       return (DWORD)-1;
     }
     else if(ret) {
