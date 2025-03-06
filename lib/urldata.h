@@ -159,6 +159,7 @@ typedef unsigned int curl_prot_t;
 #include "http_chunks.h" /* for the structs and enum stuff */
 #include "hostip.h"
 #include "hash.h"
+#include "hash_offt.h"
 #include "splay.h"
 #include "dynbuf.h"
 #include "dynhds.h"
@@ -565,7 +566,6 @@ struct hostname {
 #if defined(CURLRES_ASYNCH) || !defined(CURL_DISABLE_DOH)
 #define USE_CURL_ASYNC
 struct Curl_async {
-  char *hostname;
   struct Curl_dns_entry *dns;
 #ifdef CURLRES_ASYNCH
   struct thread_data thdata;
@@ -755,6 +755,7 @@ struct ldapconninfo;
  */
 struct connectdata {
   struct Curl_llist_node cpool_node; /* conncache lists */
+  struct Curl_llist_node cshutdn_node; /* cshutdn list */
 
   curl_closesocket_callback fclosesocket; /* function closing the socket(s) */
   void *closesocket_client;
@@ -1135,6 +1136,7 @@ typedef enum {
   EXPIRE_QUIC,
   EXPIRE_FTP_ACCEPT,
   EXPIRE_ALPN_EYEBALLS,
+  EXPIRE_SHUTDOWN,
   EXPIRE_LAST /* not an actual timer, used as a marker only */
 } expire_id;
 
@@ -1356,6 +1358,7 @@ struct UrlState {
   BIT(internal); /* internal: true if this easy handle was created for
                     internal use and the user does not have ownership of the
                     handle. */
+  BIT(http_ignorecustom); /* ignore custom method from now */
 };
 
 /*
@@ -1690,6 +1693,9 @@ struct UserDefined {
   struct curl_slist *mail_rcpt; /* linked list of mail recipients */
 #endif
   unsigned int maxconnects; /* Max idle connections in the connection cache */
+#ifdef USE_ECH
+  int tls_ech;      /* TLS ECH configuration  */
+#endif
   unsigned short use_port; /* which port to use (when not using default) */
 #ifndef CURL_DISABLE_BINDLOCAL
   unsigned short localport; /* local port number to bind to */
@@ -1717,11 +1723,13 @@ struct UserDefined {
                              to be used in the library's request(s) */
   unsigned char ipver; /* the CURL_IPRESOLVE_* defines in the public header
                           file 0 - whatever, 1 - v2, 2 - v6 */
+  unsigned char upload_flags; /* flags set by CURLOPT_UPLOAD_FLAGS */
 #ifdef HAVE_GSSAPI
   /* GSS-API credential delegation, see the documentation of
      CURLOPT_GSSAPI_DELEGATION */
   unsigned char gssapi_delegation;
 #endif
+  unsigned char http_follow_mode; /* follow HTTP redirects */
   BIT(connect_only); /* make connection/request, then let application use the
                         socket */
   BIT(connect_only_ws); /* special websocket connect-only level */
@@ -1773,7 +1781,6 @@ struct UserDefined {
   BIT(hide_progress);    /* do not use the progress meter */
   BIT(http_fail_on_error);  /* fail on HTTP error codes >= 400 */
   BIT(http_keep_sending_on_error); /* for HTTP status codes >= 300 */
-  BIT(http_follow_location); /* follow HTTP redirects */
   BIT(http_transfer_encoding); /* request compressed HTTP transfer-encoding */
   BIT(allow_auth_to_other_hosts);
   BIT(include_header); /* include received protocol headers in data output */
@@ -1826,9 +1833,6 @@ struct UserDefined {
   BIT(http09_allowed); /* allow HTTP/0.9 responses */
 #ifndef CURL_DISABLE_WEBSOCKETS
   BIT(ws_raw_mode);
-#endif
-#ifdef USE_ECH
-  int tls_ech;      /* TLS ECH configuration  */
 #endif
 };
 

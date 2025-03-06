@@ -56,7 +56,7 @@
 #  endif
 #endif
 
-#if defined(__APPLE__)
+#ifdef __APPLE__
 #include <sys/types.h>
 #include <TargetConditionals.h>
 /* Fixup faulty target macro initialization in macOS SDK since v14.4 (as of
@@ -118,6 +118,14 @@
 #      define CURL_WINDOWS_UWP
 #    endif
 #  endif
+#endif
+
+/* Avoid bogus format check warnings with mingw32ce gcc 4.4.0 in
+   C99 (-std=gnu99) mode */
+#if defined(__MINGW32CE__) && !defined(CURL_NO_FMT_CHECKS) && \
+  (defined(__STDC_VERSION__) && __STDC_VERSION__ >= 199901L) && \
+  (defined(__GNUC__) && (__GNUC__ == 4) && (__GNUC_MINOR__ == 4))
+#define CURL_NO_FMT_CHECKS
 #endif
 
 /* Compatibility */
@@ -268,7 +276,7 @@
  * When HTTP is disabled, disable HTTP-only features
  */
 
-#if defined(CURL_DISABLE_HTTP)
+#ifdef CURL_DISABLE_HTTP
 #  define CURL_DISABLE_ALTSVC 1
 #  define CURL_DISABLE_COOKIES 1
 #  define CURL_DISABLE_BASIC_AUTH 1
@@ -763,7 +771,7 @@
 #endif
 
 /* Single point where USE_NTLM definition might be defined */
-#if !defined(CURL_DISABLE_NTLM)
+#ifndef CURL_DISABLE_NTLM
 #  if defined(USE_OPENSSL) || defined(USE_MBEDTLS) ||                   \
   defined(USE_GNUTLS) || defined(USE_SECTRANSP) ||                      \
   defined(USE_OS400CRYPTO) || defined(USE_WIN32_CRYPTO) ||              \
@@ -803,7 +811,7 @@
 
 /* noreturn attribute */
 
-#if !defined(CURL_NORETURN)
+#ifndef CURL_NORETURN
 #if (defined(__GNUC__) && (__GNUC__ >= 3)) || defined(__clang__) || \
   defined(__IAR_SYSTEMS_ICC__)
 #  define CURL_NORETURN  __attribute__((__noreturn__))
@@ -816,7 +824,7 @@
 
 /* fallthrough attribute */
 
-#if !defined(FALLTHROUGH)
+#ifndef FALLTHROUGH
 #if (defined(__GNUC__) && __GNUC__ >= 7) || \
     (defined(__clang__) && __clang_major__ >= 10)
 #  define FALLTHROUGH()  __attribute__((fallthrough))
@@ -1024,7 +1032,7 @@ int getpwuid_r(uid_t uid, struct passwd *pwd, char *buf,
 #  endif
 #endif
 
-#if defined(CURL_INLINE)
+#ifdef CURL_INLINE
 /* 'CURL_INLINE' defined, use as-is */
 #elif defined(inline)
 #  define CURL_INLINE inline /* 'inline' defined, assumed correct */

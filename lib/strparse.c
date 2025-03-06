@@ -31,6 +31,12 @@ void Curl_str_init(struct Curl_str *out)
   out->len = 0;
 }
 
+void Curl_str_assign(struct Curl_str *out, const char *str, size_t len)
+{
+  out->str = str;
+  out->len = len;
+}
+
 /* Get a word until the first DELIM or end of string. At least one byte long.
    return non-zero on error */
 int Curl_str_until(const char **linep, struct Curl_str *out,
@@ -276,4 +282,11 @@ void Curl_str_trimblanks(struct Curl_str *out)
   /* trim trailing spaces and tabs */
   while(out->len && ISBLANK(out->str[out->len - 1]))
     out->len--;
+}
+
+/* increase the pointer until it has moved over all blanks */
+void Curl_str_passblanks(const char **linep)
+{
+  while(ISBLANK(**linep))
+    (*linep)++; /* move over it */
 }

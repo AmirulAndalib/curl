@@ -53,8 +53,6 @@
 static bool use_ipv6 = FALSE;
 static const char *ipv_inuse = "IPv4";
 
-const char *serverlogfile = ""; /* for a util.c function we don't use */
-
 int main(int argc, char *argv[])
 {
   int arg = 1;
@@ -99,8 +97,8 @@ int main(int argc, char *argv[])
   }
 
 #ifdef _WIN32
-  win32_init();
-  atexit(win32_cleanup);
+  if(win32_init())
+    return 2;
 #endif
 
 #if defined(CURLRES_IPV6)

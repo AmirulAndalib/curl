@@ -43,6 +43,7 @@ struct Curl_str {
 };
 
 void Curl_str_init(struct Curl_str *out);
+void Curl_str_assign(struct Curl_str *out, const char *str, size_t len);
 
 #define Curl_str(x) ((x)->str)
 #define Curl_strlen(x) ((x)->len)
@@ -96,5 +97,6 @@ int Curl_str_nudge(struct Curl_str *str, size_t num);
 
 int Curl_str_cspn(const char **linep, struct Curl_str *out, const char *cspn);
 void Curl_str_trimblanks(struct Curl_str *out);
+void Curl_str_passblanks(const char **linep);
 
 #endif /* HEADER_CURL_STRPARSE_H */

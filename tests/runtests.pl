@@ -416,6 +416,9 @@ sub showdiff {
 
     if(!$out[0]) {
         @out = `diff -c $file2 $file1 2>$dev_null`;
+        if(!$out[0]) {
+            logmsg "Failed to show diff. The diff tool may be missing.\n";
+        }
     }
 
     return @out;
@@ -543,7 +546,7 @@ sub checksystemfeatures {
                 $pwd = sys_native_current_path();
                 $feature{"win32"} = 1;
             }
-            if ($libcurl =~ /\s(winssl|schannel)\b/i) {
+            if ($libcurl =~ /\sschannel\b/i) {
                 $feature{"Schannel"} = 1;
                 $feature{"SSLpinning"} = 1;
             }
@@ -569,7 +572,7 @@ sub checksystemfeatures {
                 $feature{"sectransp"} = 1;
                 $feature{"SSLpinning"} = 1;
             }
-            elsif ($libcurl =~ /\sBoringSSL\b/i) {
+            elsif ($libcurl =~ /\s(BoringSSL|AWS-LC)\b/i) {
                 # OpenSSL compatible API
                 $feature{"OpenSSL"} = 1;
                 $feature{"SSLpinning"} = 1;
@@ -852,6 +855,14 @@ sub checksystemfeatures {
     chomp $hosttype;
     my $hostos=$^O;
 
+    my $havediff;
+    if(system("diff $TESTDIR/DISABLED $TESTDIR/DISABLED 2>$dev_null") == 0) {
+      $havediff = 'available';
+    }
+    else {
+      $havediff = 'missing';
+    }
+
     # display summary information about curl and the test host
     logmsg ("********* System characteristics ******** \n",
             "* $curl\n",
@@ -863,6 +874,7 @@ sub checksystemfeatures {
             "* System: $hosttype\n",
             "* OS: $hostos\n",
             "* Perl: $^V ($^X)\n",
+            "* diff: $havediff\n",
             "* Args: $args\n");
 
     if($jobs) {

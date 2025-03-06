@@ -85,16 +85,7 @@
 /* include memdebug.h last */
 #include "memdebug.h"
 
-#ifdef USE_WINSOCK
-#undef  EINTR
-#define EINTR    4 /* errno.h value */
-#endif
-
 #define DEFAULT_PORT 8905
-
-#ifndef DEFAULT_LOGFILE
-#define DEFAULT_LOGFILE "log/socksd.log"
-#endif
 
 #ifndef DEFAULT_REQFILE
 #define DEFAULT_REQFILE "log/socksd-request.log"
@@ -134,7 +125,6 @@ struct configurable {
 
 static struct configurable config;
 
-const char *serverlogfile = DEFAULT_LOGFILE;
 static const char *reqlogfile = DEFAULT_REQFILE;
 static const char *configfile = DEFAULT_CONFIG;
 
@@ -750,11 +740,11 @@ static bool incoming(curl_socket_t listenfd)
         logmsg("signalled to die, exiting...");
         return FALSE;
       }
-    } while((rc == -1) && ((error = errno) == EINTR));
+    } while((rc == -1) && ((error = SOCKERRNO) == EINTR));
 
     if(rc < 0) {
       logmsg("select() failed with error: (%d) %s",
-             error, strerror(error));
+             error, sstrerror(error));
       return FALSE;
     }
 
@@ -979,6 +969,8 @@ int main(int argc, char *argv[])
   bool unlink_socket = false;
 #endif
 
+  serverlogfile = "log/socksd.log";
+
   while(argc > arg) {
     if(!strcmp("--version", argv[arg])) {
       printf("socksd IPv4%s\n",
@@ -1086,8 +1078,8 @@ int main(int argc, char *argv[])
   }
 
 #ifdef _WIN32
-  win32_init();
-  atexit(win32_cleanup);
+  if(win32_init())
+    return 2;
 #endif
 
   CURL_SET_BINMODE(stdin);

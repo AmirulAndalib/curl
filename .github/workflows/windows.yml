@@ -44,6 +44,7 @@ jobs:
       run:
         shell: C:\cygwin\bin\bash.exe '{0}'
     env:
+      MAKEFLAGS: -j 5
       SHELLOPTS: 'igncr'
     strategy:
       matrix:
@@ -111,9 +112,9 @@ jobs:
         timeout-minutes: 10
         run: |
           if [ '${{ matrix.build }}' = 'cmake' ]; then
-            cmake --build bld --config '${{ matrix.type }}'
+            cmake --build bld
           else
-            make -C bld -j5 V=1 install
+            make -C bld V=1 install
           fi
 
       - name: 'curl version'
@@ -130,9 +131,9 @@ jobs:
         timeout-minutes: 15
         run: |
           if [ '${{ matrix.build }}' = 'cmake' ]; then
-            cmake --build bld --config '${{ matrix.type }}' --target testdeps
+            cmake --build bld --target testdeps
           else
-            make -C bld -j5 V=1 -C tests
+            make -C bld V=1 -C tests
           fi
 
       - name: 'run tests'
@@ -145,9 +146,9 @@ jobs:
           fi
           if [ '${{ matrix.build }}' = 'cmake' ]; then
             PATH="$PWD/bld/lib:$PATH"
-            cmake --build bld --config '${{ matrix.type }}' --target test-ci
+            cmake --build bld --target test-ci
           else
-            make -C bld -j5 V=1 test-ci
+            make -C bld V=1 test-ci
           fi
 
       - name: 'build examples'
@@ -155,9 +156,9 @@ jobs:
         timeout-minutes: 5
         run: |
           if [ '${{ matrix.build }}' = 'cmake' ]; then
-            cmake --build bld --config '${{ matrix.type }}' --target curl-examples
+            cmake --build bld --target curl-examples
           else
-            make -C bld -j5 V=1 examples
+            make -C bld V=1 examples
           fi
 
   msys2:  # both msys and mingw-w64
@@ -167,6 +168,8 @@ jobs:
     defaults:
       run:
         shell: msys2 {0}
+    env:
+      MAKEFLAGS: -j 5
     strategy:
       matrix:
         include:
@@ -189,7 +192,7 @@ jobs:
       - run: git config --global core.autocrlf input
         shell: pwsh
 
-      - uses: msys2/setup-msys2@d44ca8e88d8b43d56cf5670f91747359d5537f97 # v2
+      - uses: msys2/setup-msys2@61f9e5e925871ba6c9e3e8da24ede83ea27fa91f # v2
         if: ${{ matrix.sys == 'msys' }}
         with:
           msystem: ${{ matrix.sys }}
@@ -197,6 +200,7 @@ jobs:
           install: >-
             gcc
             ${{ matrix.build }} ${{ matrix.build == 'autotools' && 'make' || 'ninja' }}
+            diffutils
             openssh
             openssl-devel
             zlib-devel
@@ -204,21 +208,29 @@ jobs:
             libnghttp2-devel
             libpsl-devel
             libssh2-devel
-            ${{ matrix.chkprefill == '_chkprefill' && 'diffutils' || '' }}
 
-      - uses: msys2/setup-msys2@d44ca8e88d8b43d56cf5670f91747359d5537f97 # v2
+      - uses: msys2/setup-msys2@61f9e5e925871ba6c9e3e8da24ede83ea27fa91f # v2
         if: ${{ matrix.sys != 'msys' }}
         with:
           msystem: ${{ matrix.sys }}
           install: >-
             mingw-w64-${{ matrix.env }}-cc
             mingw-w64-${{ matrix.env }}-${{ matrix.build }} ${{ matrix.build == 'autotools' && 'make' || '' }}
+            mingw-w64-${{ matrix.env }}-diffutils
             openssh
             mingw-w64-${{ matrix.env }}-openssl
             mingw-w64-${{ matrix.env }}-libssh2
             mingw-w64-${{ matrix.env }}-libpsl
             mingw-w64-${{ matrix.env }}-c-ares
-            ${{ matrix.chkprefill == '_chkprefill' && format('mingw-w64-{0}-diffutils', matrix.env) || '' }}
+
+      - name: 'downgrade msys2-runtime'
+        if: ${{ matrix.tflags != 'skipall' && matrix.tflags != 'skiprun' && matrix.sys != 'msys' }}
+        timeout-minutes: 2
+        # Downgrade to a known good MSYS2 runtime version to avoid the performance regression
+        # causing runtests.pl to run at 2-3x reduced speed.
+        run: |
+          /usr/bin/sed -i 's/^CheckSpace/#CheckSpace/' /etc/pacman.conf
+          exec /usr/bin/pacman --noconfirm --noprogressbar --upgrade https://mirror.msys2.org/msys/x86_64/msys2-runtime-3.5.4-8-x86_64.pkg.tar.zst
 
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
         with:
@@ -250,8 +262,6 @@ jobs:
               fi
               [ '${{ matrix.sys }}' = 'msys' ] && options+=' -D_CURL_PREFILL=ON'
               [ '${{ matrix.test }}' = 'uwp' ] && options+=' -DCMAKE_SYSTEM_NAME=WindowsStore -DCMAKE_SYSTEM_VERSION=10.0'
-              [ '${{ matrix.type }}' = 'Debug' ] && options+=' -DCMAKE_RUNTIME_OUTPUT_DIRECTORY_DEBUG='
-              [ '${{ matrix.type }}' = 'Release' ] && options+=' -DCMAKE_RUNTIME_OUTPUT_DIRECTORY_RELEASE='
               [ "${_chkprefill}" = '_chkprefill' ] && options+=' -D_CURL_PREFILL=OFF'
               cmake -B "bld${_chkprefill}" -G Ninja ${options} \
                 -DCMAKE_C_FLAGS="${{ matrix.cflags }} ${CFLAGS_CMAKE} ${CPPFLAGS}" \
@@ -286,9 +296,9 @@ jobs:
         timeout-minutes: 10
         run: |
           if [ '${{ matrix.build }}' = 'cmake' ]; then
-            cmake --build bld --config '${{ matrix.type }}'
+            cmake --build bld
           else
-            make -C bld -j5 V=1 install
+            make -C bld V=1 install
           fi
 
       - name: 'curl version'
@@ -311,9 +321,9 @@ jobs:
         timeout-minutes: 10
         run: |
           if [ '${{ matrix.build }}' = 'cmake' ]; then
-            cmake --build bld --config '${{ matrix.type }}' --target testdeps
+            cmake --build bld --target testdeps
           else
-            make -C bld -j5 V=1 -C tests
+            make -C bld V=1 -C tests
           fi
           if [ '${{ matrix.build }}' != 'cmake' ]; then
             # avoid libtool's .exe wrappers
@@ -334,12 +344,10 @@ jobs:
         if: ${{ matrix.tflags != 'skipall' && matrix.tflags != 'skiprun' }}
         timeout-minutes: 10
         run: |
-          export TFLAGS='-j8 ${{ matrix.tflags }} ~SCP'
+          export TFLAGS='-j8 ${{ matrix.tflags }}'
+          TFLAGS+=' ~613'  # SFTP
           if [ '${{ matrix.sys }}' != 'msys' ]; then
-            TFLAGS+=' ~2301 ~2302 ~2310'  # WebSockets'
-            TFLAGS+=' ~612 ~613 ~616 ~618'  # SFTP
-          else
-            TFLAGS+=' ~SFTP'
+            TFLAGS+=' ~612'  # SFTP
           fi
           if [ -x "$(cygpath "${SYSTEMROOT}/System32/curl.exe")" ]; then
             TFLAGS+=" -ac $(cygpath "${SYSTEMROOT}/System32/curl.exe")"
@@ -347,10 +355,10 @@ jobs:
           PATH="$PATH:/c/Program Files (x86)/stunnel/bin"
           if [ '${{ matrix.build }}' = 'cmake' ]; then
             PATH="$PWD/bld/lib:$PATH"
-            cmake --build bld --config '${{ matrix.type }}' --target test-ci
+            cmake --build bld --target test-ci
           else
             PATH="$PWD/bld/lib/.libs:$PATH"
-            make -C bld -j5 V=1 test-ci
+            make -C bld V=1 test-ci
           fi
 
       - name: 'build examples'
@@ -358,9 +366,9 @@ jobs:
         timeout-minutes: 5
         run: |
           if [ '${{ matrix.build }}' = 'cmake' ]; then
-            cmake --build bld --config '${{ matrix.type }}' --target curl-examples
+            cmake --build bld --target curl-examples
           else
-            make -C bld -j5 V=1 examples
+            make -C bld V=1 examples
           fi
 
   mingw-w64-standalone-downloads:
@@ -370,6 +378,8 @@ jobs:
     defaults:
       run:
         shell: C:\msys64\usr\bin\bash.exe {0}
+    env:
+      MAKEFLAGS: -j 5
     strategy:
       matrix:
         include:
@@ -379,14 +389,13 @@ jobs:
             url: 'https://github.com/brechtsanders/winlibs_mingw/releases/download/9.5.0-10.0.0-msvcrt-r1/winlibs-x86_64-posix-seh-gcc-9.5.0-mingw-w64msvcrt-10.0.0-r1.7z'
             config: '-DENABLE_DEBUG=ON -DBUILD_SHARED_LIBS=OFF -DCURL_USE_SCHANNEL=ON -DENABLE_UNICODE=OFF'
             type: 'Release'
-            tflags: '~2301 ~2302 ~2310 ~3027'
           - name: 'schannel U'
             env: '7.3.0-x86_64'
             dir: 'mingw64'
             url: 'https://downloads.sourceforge.net/mingw-w64/Toolchains%20targetting%20Win64/Personal%20Builds/mingw-builds/7.3.0/threads-win32/seh/x86_64-7.3.0-release-win32-seh-rt_v5-rev0.7z'
             config: '-DENABLE_DEBUG=ON -DBUILD_SHARED_LIBS=OFF -DCURL_USE_SCHANNEL=ON -DENABLE_UNICODE=ON'
             type: 'Release'
-            tflags: '~2301 ~2302 ~2310 ~3027 ~3023 ~3024 ~1451'
+            tflags: 'skiprun'
           - name: 'schannel !unity'
             env: '6.4.0-i686'
             dir: 'mingw32'
@@ -397,7 +406,7 @@ jobs:
       fail-fast: false
     steps:
       - name: 'cache compiler (gcc ${{ matrix.env }})'
-        uses: actions/cache@1bd1e32a3bdc45362d1e726936510720a7c30a57 # v4
+        uses: actions/cache@d4323d4df104b026a6aa633fdb11d772146be0bf # v4
         id: cache-compiler
         with:
           path: ~\my-cache
@@ -428,8 +437,6 @@ jobs:
           PATH="$(cygpath "${USERPROFILE}")/my-cache/${{ matrix.dir }}/bin:/c/msys64/usr/bin:$PATH"
           for _chkprefill in '' ${{ matrix.chkprefill }}; do
             options=''
-            [ '${{ matrix.type }}' = 'Debug' ] && options+=' -DCMAKE_RUNTIME_OUTPUT_DIRECTORY_DEBUG='
-            [ '${{ matrix.type }}' = 'Release' ] && options+=' -DCMAKE_RUNTIME_OUTPUT_DIRECTORY_RELEASE='
             [ "${_chkprefill}" = '_chkprefill' ] && options+=' -D_CURL_PREFILL=OFF'
             cmake -B "bld${_chkprefill}" -G 'MSYS Makefiles' ${options} \
               -DCMAKE_C_COMPILER=gcc \
@@ -457,7 +464,7 @@ jobs:
         timeout-minutes: 5
         run: |
           PATH="$(cygpath "${USERPROFILE}")/my-cache/${{ matrix.dir }}/bin:/c/msys64/usr/bin:$PATH"
-          cmake --build bld --config '${{ matrix.type }}' --parallel 5
+          cmake --build bld
 
       - name: 'curl version'
         timeout-minutes: 1
@@ -471,7 +478,7 @@ jobs:
         timeout-minutes: 10
         run: |
           PATH="$(cygpath "${USERPROFILE}")/my-cache/${{ matrix.dir }}/bin:/c/msys64/usr/bin:$PATH"
-          cmake --build bld --config '${{ matrix.type }}' --parallel 5 --target testdeps
+          cmake --build bld --target testdeps
 
       - name: 'install test prereqs'
         if: ${{ matrix.tflags != 'skipall' && matrix.tflags != 'skiprun' }}
@@ -495,32 +502,34 @@ jobs:
         timeout-minutes: 10
         run: |
           PATH="$(cygpath "${USERPROFILE}")/my-cache/${{ matrix.dir }}/bin:/c/msys64/usr/bin:$PATH"
-          export TFLAGS='-j8 ~WebSockets ${{ matrix.tflags }}'
+          export TFLAGS='-j8 ${{ matrix.tflags }}'
           if [ -x "$(cygpath "${SYSTEMROOT}/System32/curl.exe")" ]; then
             TFLAGS+=" -ac $(cygpath "${SYSTEMROOT}/System32/curl.exe")"
           fi
           PATH="$PWD/bld/lib:$PATH:/c/Program Files (x86)/stunnel/bin"
-          cmake --build bld --config '${{ matrix.type }}' --target test-ci
+          cmake --build bld --target test-ci
 
       - name: 'build examples'
         timeout-minutes: 5
         run: |
           PATH="$(cygpath "${USERPROFILE}")/my-cache/${{ matrix.dir }}/bin:/c/msys64/usr/bin:$PATH"
-          cmake --build bld --config '${{ matrix.type }}' --parallel 5 --target curl-examples
+          cmake --build bld --target curl-examples
 
   linux-cross-mingw-w64:
     name: "linux-mingw, ${{ matrix.build == 'cmake' && 'CM' || 'AM' }} ${{ matrix.compiler }}"
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    env:
+      MAKEFLAGS: -j 5
+      TRIPLET: 'x86_64-w64-mingw32'
     strategy:
       fail-fast: false
       matrix:
         build: [autotools, cmake]
         compiler: [gcc]
-    env:
-      TRIPLET: 'x86_64-w64-mingw32'
     steps:
       - name: 'install packages'
+        timeout-minutes: 5
         run: sudo apt-get -o Dpkg::Use-Pty=0 install mingw-w64 ${{ matrix.build == 'cmake' && 'ninja-build' || '' }}
 
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
@@ -564,7 +573,7 @@ jobs:
           if [ '${{ matrix.build }}' = 'cmake' ]; then
             cmake --build bld
           else
-            make -C bld -j5
+            make -C bld
           fi
 
       - name: 'curl info'
@@ -576,7 +585,7 @@ jobs:
           if [ '${{ matrix.build }}' = 'cmake' ]; then
             cmake --build bld --target testdeps
           else
-            make -C bld -j5 -C tests
+            make -C bld -C tests
           fi
 
       - name: 'build examples'
@@ -584,7 +593,7 @@ jobs:
           if [ '${{ matrix.build }}' = 'cmake' ]; then
             cmake --build bld --target curl-examples
           else
-            make -C bld -j5 examples
+            make -C bld examples
           fi
 
   wince:
@@ -592,6 +601,7 @@ jobs:
     runs-on: 'macos-latest'
     timeout-minutes: 10
     env:
+      MAKEFLAGS: -j 4
       toolchain-version: '0.59.1'
     strategy:
       matrix:
@@ -600,12 +610,13 @@ jobs:
     steps:
       - name: 'install packages'
         if: ${{ matrix.build == 'autotools' }}
+        timeout-minutes: 5
         run: |
           echo automake libtool | xargs -Ix -n1 echo brew '"x"' > /tmp/Brewfile
-          while [[ $? == 0 ]]; do for i in 1 2 3; do brew update && brew bundle install --no-lock --file /tmp/Brewfile && break 2 || { echo Error: wait to try again; sleep 10; } done; false Too many retries; done
+          while [[ $? == 0 ]]; do for i in 1 2 3; do brew update && brew bundle install --file /tmp/Brewfile && break 2 || { echo Error: wait to try again; sleep 10; } done; false Too many retries; done
 
       - name: 'cache compiler (mingw32ce)'
-        uses: actions/cache@1bd1e32a3bdc45362d1e726936510720a7c30a57 # v4
+        uses: actions/cache@d4323d4df104b026a6aa633fdb11d772146be0bf # v4
         id: cache-compiler
         with:
           path: ~/opt/mingw32ce
@@ -613,6 +624,7 @@ jobs:
 
       - name: 'install compiler (mingw32ce)'
         if: ${{ steps.cache-compiler.outputs.cache-hit != 'true' }}
+        timeout-minutes: 5
         run: |
           cd "${HOME}" || exit 1
           curl --disable --fail --silent --show-error --connect-timeout 15 --max-time 120 --retry 3 --retry-connrefused --proto-redir =https \
@@ -623,18 +635,19 @@ jobs:
 
       - name: 'configure'
         run: |
-          MINGW32CE_ROOT="${HOME}/opt/mingw32ce"
+          PATH="$HOME/opt/mingw32ce/bin:$PATH"
           if [ '${{ matrix.build }}' = 'cmake' ]; then
             cmake -B bld \
               -DCMAKE_SYSTEM_NAME=WindowsCE \
               -DCMAKE_SYSTEM_VERSION=8.0 \
               -DCMAKE_SYSTEM_PROCESSOR=arm \
-              -DCMAKE_C_COMPILER_TARGET=arm-wince-mingw32ce \
-              -DCMAKE_C_COMPILER="${MINGW32CE_ROOT}/bin/arm-mingw32ce-gcc" \
-              -DCMAKE_RC_COMPILER="${MINGW32CE_ROOT}/bin/arm-mingw32ce-windres" \
-              -DMINGW32CE_LIBRARY_DIR="${MINGW32CE_ROOT}/arm-mingw32ce/lib" \
+              -DCMAKE_C_FLAGS='-O3 -DNDEBUG' \
+              -DCMAKE_C_COMPILER_TARGET=arm-mingw32ce \
+              -DCMAKE_C_COMPILER=arm-mingw32ce-gcc \
+              -DCMAKE_RC_COMPILER=arm-mingw32ce-windres \
+              -DMINGW32CE_LIBRARY_DIR="$HOME/opt/mingw32ce/arm-mingw32ce/lib" \
               -DCMAKE_IGNORE_PREFIX_PATH="$(brew --prefix)" \
-              -DCMAKE_UNITY_BUILD=ON -DCURL_TEST_BUNDLES=ON \
+              -DCMAKE_UNITY_BUILD=ON -DCMAKE_UNITY_BUILD_BATCH_SIZE=50 -DCURL_TEST_BUNDLES=ON \
               -DBUILD_SHARED_LIBS=ON -DBUILD_STATIC_LIBS=ON -DBUILD_STATIC_CURL=OFF \
               -DCURL_WERROR=ON \
               -DCURL_USE_SCHANNEL=ON \
@@ -642,12 +655,7 @@ jobs:
           else
             autoreconf -fi
             mkdir bld && cd bld && ../configure --disable-dependency-tracking --enable-unity --enable-test-bundles --enable-warnings --enable-werror \
-              ac_cv_prog_cc_c99=no \
-              CC="${MINGW32CE_ROOT}/bin/arm-mingw32ce-gcc" \
-              AR="${MINGW32CE_ROOT}/bin/arm-mingw32ce-ar" \
-              RANLIB="${MINGW32CE_ROOT}/bin/arm-mingw32ce-ranlib" \
-              RC="${MINGW32CE_ROOT}/bin/arm-mingw32ce-windres" \
-              --host=arm-wince-mingw32ce \
+              --host=arm-mingw32ce \
               --with-schannel \
               --without-libpsl \
               --disable-shared
@@ -664,10 +672,11 @@ jobs:
 
       - name: 'build'
         run: |
+          PATH="$HOME/opt/mingw32ce/bin:$PATH"
           if [ '${{ matrix.build }}' = 'cmake' ]; then
             cmake --build bld
           else
-            make -j5 -C bld
+            make -C bld
           fi
 
       - name: 'curl info'
@@ -677,19 +686,21 @@ jobs:
       - name: 'build tests'
         if: ${{ matrix.build == 'cmake' }}  # skip for autotools to save time
         run: |
+          PATH="$HOME/opt/mingw32ce/bin:$PATH"
           if [ '${{ matrix.build }}' = 'cmake' ]; then
             cmake --build bld --target testdeps
           else
-            make -j5 -C bld -C tests
+            make -C bld -C tests
           fi
 
       - name: 'build examples'
         if: ${{ matrix.build == 'cmake' }}  # skip for autotools to save time
         run: |
+          PATH="$HOME/opt/mingw32ce/bin:$PATH"
           if [ '${{ matrix.build }}' = 'cmake' ]; then
             cmake --build bld --target curl-examples
           else
-            make -j5 -C bld examples
+            make -C bld examples
           fi
 
   msvc:
@@ -705,28 +716,6 @@ jobs:
     strategy:
       matrix:
         include:
-          - name: 'schannel MultiSSL U'
-            install: 'brotli zlib zstd libpsl nghttp2 libssh2[core,zlib] pkgconf gsasl openssl mbedtls wolfssl'
-            arch: 'x64'
-            plat: 'windows'
-            type: 'Debug'
-            tflags: '~1516 ~2301 ~2302 ~2303 ~2307 ~2310'
-            config: >-
-              -DCURL_USE_LIBSSH2=ON
-              -DCURL_USE_SCHANNEL=ON  -DCURL_USE_OPENSSL=ON -DCURL_USE_MBEDTLS=ON -DCURL_USE_WOLFSSL=ON -DCURL_DEFAULT_SSL_BACKEND=schannel
-              -DCURL_USE_GSASL=ON -DUSE_WIN32_IDN=ON -DENABLE_UNICODE=ON -DUSE_SSLS_EXPORT=ON
-
-          - name: 'openssl'
-            install: 'brotli zlib zstd libpsl nghttp2 nghttp3 openssl libssh2 pkgconf gsasl c-ares libuv krb5'
-            arch: 'x64'
-            plat: 'windows'
-            type: 'Debug'
-            tflags: '~1516 ~2301 ~2302 ~2303 ~2307 ~2310'
-            config: >-
-              -DCURL_USE_LIBSSH2=ON
-              -DCURL_USE_SCHANNEL=OFF -DCURL_USE_OPENSSL=ON -DUSE_OPENSSL_QUIC=ON
-              -DCURL_USE_GSASL=ON -DENABLE_ARES=ON -DCURL_USE_LIBUV=ON -DCURL_USE_GSSAPI=ON
-
           - name: 'openssl'
             install: 'brotli zlib zstd        nghttp2 nghttp3 openssl libssh2'
             arch: 'x64'
@@ -738,12 +727,31 @@ jobs:
               -DCURL_USE_SCHANNEL=OFF -DCURL_USE_OPENSSL=ON -DUSE_OPENSSL_QUIC=ON
               -DCURL_USE_LIBPSL=OFF
 
+          - name: 'openssl'
+            install: 'brotli zlib zstd libpsl nghttp2 nghttp3 openssl libssh2 pkgconf gsasl c-ares libuv krb5'
+            arch: 'x64'
+            plat: 'windows'
+            type: 'Debug'
+            config: >-
+              -DCURL_USE_LIBSSH2=ON
+              -DCURL_USE_SCHANNEL=OFF -DCURL_USE_OPENSSL=ON -DUSE_OPENSSL_QUIC=ON
+              -DCURL_USE_GSASL=ON -DENABLE_ARES=ON -DCURL_USE_LIBUV=ON -DCURL_USE_GSSAPI=ON
+
+          - name: 'schannel MultiSSL U'
+            install: 'brotli zlib zstd libpsl nghttp2 libssh2[core,zlib] pkgconf gsasl openssl mbedtls wolfssl'
+            arch: 'x64'
+            plat: 'windows'
+            type: 'Debug'
+            config: >-
+              -DCURL_USE_LIBSSH2=ON
+              -DCURL_USE_SCHANNEL=ON  -DCURL_USE_OPENSSL=ON -DCURL_USE_MBEDTLS=ON -DCURL_USE_WOLFSSL=ON -DCURL_DEFAULT_SSL_BACKEND=schannel
+              -DCURL_USE_GSASL=ON -DUSE_WIN32_IDN=ON -DENABLE_UNICODE=ON -DUSE_SSLS_EXPORT=ON
+
           - name: 'libressl'
             install: 'brotli zlib zstd libpsl nghttp2 libressl libssh2[core,zlib] pkgconf ngtcp2[libressl] nghttp3'
             arch: 'x64'
             plat: 'windows'
             type: 'Debug'
-            tflags: '~1516 ~2301 ~2302 ~2303 ~2307 ~2310'
             config: >-
               -DCURL_USE_LIBSSH2=ON
               -DCURL_USE_SCHANNEL=OFF -DCURL_USE_OPENSSL=ON -DUSE_NGTCP2=ON
@@ -754,7 +762,6 @@ jobs:
             arch: 'x64'
             plat: 'windows'
             type: 'Debug'
-            tflags: '~1516 ~2301 ~2302 ~2303 ~2307 ~2310'
             config: >-
               -DCURL_USE_LIBSSH2=ON
               -DCURL_USE_SCHANNEL=OFF -DCURL_USE_OPENSSL=ON
@@ -765,7 +772,6 @@ jobs:
             arch: 'x64'
             plat: 'windows'
             type: 'Debug'
-            tflags: '~1516'
             config: >-
               -DCURL_USE_LIBSSH2=ON
               -DCURL_USE_SCHANNEL=OFF -DCURL_USE_WOLFSSL=ON -DUSE_NGTCP2=ON
@@ -777,7 +783,6 @@ jobs:
             arch: 'x64'
             plat: 'windows'
             type: 'Debug'
-            tflags: '~1516'
             chkprefill: '_chkprefill'
             # WARNING: libssh uses hard-coded world-writable paths (/etc/..., ~/.ssh/) to
             #          read its configuration from, making it vulnerable to attacks on
@@ -902,13 +907,8 @@ jobs:
         if: ${{ matrix.tflags != 'skipall' && matrix.tflags != 'skiprun' }}
         timeout-minutes: 10
         run: |
-          export CURL_DIRSUFFIX='${{ matrix.type }}/'
-          export TFLAGS='-j8 ~WebSockets ~SCP ~612 ${{ matrix.tflags }}'
-          if [[ '${{ matrix.install }}' = *'libssh2[core,zlib]'* ]]; then
-            TFLAGS+=' ~SFTP'
-          elif [[ '${{ matrix.install }}' = *'libssh '* ]]; then
-            TFLAGS+=' ~614'  # 'SFTP pre-quote chmod' SFTP, pre-quote, directory
-          fi
+          export CURL_DIRSUFFIX='${{ matrix.type }}'
+          export TFLAGS='-j8 ${{ matrix.tflags }} ~2302 ~2303 ~2307'
           PATH="$PWD/bld/lib/${{ matrix.type }}:$PATH:/c/Program Files (x86)/stunnel/bin:/c/Program Files/OpenSSH-Win64"
           PATH="/c/msys64/usr/bin:$PATH"
           cmake --build bld --config '${{ matrix.type }}' --target test-ci
